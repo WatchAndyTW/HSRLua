@@ -10,6 +10,11 @@
 #include <filesystem>
 
 #include "lua/lua.hpp"
+#include "scanner.hpp"
+#include "pe.hpp"
+#include "util.hpp"
+
+namespace fs = std::filesystem;
 
 lua_State* gi_L;
 HMODULE xlua;
@@ -19,26 +24,44 @@ pfn_loadbuffer* pp_loadbuffer;
 int xluaL_loadbuffer_hook(lua_State* L, const char* chunk, size_t sz, const char* chunkname)
 {
     gi_L = L;
-    GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, L"xlua", &xlua);
+    xlua = GetModuleHandle(L"xlua");
     *pp_loadbuffer = (pfn_loadbuffer)GetProcAddress(xlua, "xluaL_loadbuffer");
     return (*pp_loadbuffer)(L, chunk, sz, chunkname);
 }
 
+pfn_loadbuffer* scan_loadbuffer(HMODULE ua)
+{
+    util::log("Scanning... ");
+    auto il2cpp = util::pe::get_section_by_name(ua, "il2cpp");
+    auto rdata = util::pe::get_section_by_name(ua, ".rdata");
+
+    auto str = util::scanner::find_pat((const uint8_t*)"xluaL_loadbuffer", "xxxxxxxxxxxxxxxx", (const uint8_t*)((uint64_t)ua + rdata->VirtualAddress), rdata->Misc.VirtualSize);
+    auto ref = util::scanner::find_ref_relative(str, (const uint8_t*)((uint64_t)ua + il2cpp->VirtualAddress), il2cpp->Misc.VirtualSize, true);
+
+    auto a = util::scanner::find_pat((const uint8_t*)"\xE8\x00\x00\x00\x00\x48", "x????x", ref, 0x100);
+    a += 8;
+    auto off = *(uint32_t*)a;
+    pfn_loadbuffer* ptr = (pfn_loadbuffer*)(a + off + 4);
+
+    printf("%p\n", ptr);
+    return ptr;
+}
+
 void get_gi_L()
 {
-    printf("Waiting...\n");
-
-    uint64_t ua = 0;
-    while ((ua = (uint64_t)GetModuleHandle(L"UserAssembly.dll")) == 0)
+    HMODULE ua = NULL;
+    while ((ua = GetModuleHandle(L"UserAssembly.dll")) == 0)
         Sleep(50);
 
-    pp_loadbuffer = (pfn_loadbuffer*)(ua + 0xC6DA240);
+    pp_loadbuffer = scan_loadbuffer(ua);
     *pp_loadbuffer = xluaL_loadbuffer_hook;
+
+    util::log("Waiting for Lua...\n");
 
     while (!gi_L)
         Sleep(50);
 
-    printf("L: %p\n", gi_L);
+    util::log("L: %p\n", gi_L);
 }
 
 std::optional<std::string> compile(lua_State* L, const char* script)
@@ -55,8 +78,8 @@ std::optional<std::string> compile(lua_State* L, const char* script)
     auto ret = luaL_loadstring(L, script);
     if (ret != 0)
     {
-        printf("compilation failed(%i)\n", ret);
-        printf("%s\n", lua_tolstring(L, 1, NULL));
+        util::log("compilation failed(%i)\n", ret);
+        util::log("%s\n", lua_tolstring(L, 1, NULL));
         lua_pop(L, 1);
         return std::nullopt;
     }
@@ -64,7 +87,7 @@ std::optional<std::string> compile(lua_State* L, const char* script)
     ret = lua_dump(L, writer, &compiled_script, 0);
     if (ret != 0)
     {
-        printf("lua_dump failed(%i)\n", ret);
+        util::log("lua_dump failed(%i)\n", ret);
         return std::nullopt;
     }
 
@@ -72,17 +95,17 @@ std::optional<std::string> compile(lua_State* L, const char* script)
     return compiled_script.str();
 }
 
-void exec(std::string compiled)
+void exec(const std::string& compiled)
 {
-    using pfn_pcall = int (*)(void* L, int nargs, int nresults, int errfunc);
+    using pfn_pcall = int (*)(lua_State* L, int nargs, int nresults, int errfunc);
     static auto xlua_pcall = (pfn_pcall)GetProcAddress(xlua, "lua_pcall");
     static auto xluaL_loadbuffer = (pfn_loadbuffer)GetProcAddress(xlua, "xluaL_loadbuffer");
 
     int ret = xluaL_loadbuffer(gi_L, compiled.c_str(), compiled.length(), "GILua");
     if (ret != 0)
     {
-        printf("loading failed(%i)\n", ret);
-        printf("%s\n", lua_tolstring(gi_L, 1, NULL));
+        util::log("loading failed(%i)\n", ret);
+        util::log("%s\n", lua_tolstring(gi_L, 1, NULL));
         lua_pop(gi_L, 1);
         return;
     }
@@ -90,98 +113,108 @@ void exec(std::string compiled)
     ret = xlua_pcall(gi_L, 0, 0, 0);
     if (ret != 0)
     {
-        printf("execution failed(%i)\n", ret);
-        printf("%s\n", lua_tolstring(gi_L, 1, NULL));
+        util::log("execution failed(%i)\n", ret);
+        util::log("%s\n", lua_tolstring(gi_L, 1, NULL));
         lua_pop(gi_L, 1);
     }
 }
 
-std::optional<std::string> read_whole_file(const std::filesystem::path& file)
-try
+void load_lua_file(lua_State* L, const fs::path& file)
 {
-    std::stringstream buf;
-    std::ifstream ifs(file);
-    if (!ifs.is_open())
-        return std::nullopt;
-    ifs.exceptions(std::ios::failbit);
-    buf << ifs.rdbuf();
-    return buf.str();
-}
-catch (const std::ios::failure&)
-{
-    return std::nullopt;
+    auto name = file.filename().string();
+    util::log("loading %s\n", name.c_str());
+
+    auto script = util::read_whole_file(file);
+    if (!script)
+    {
+        util::log("Failed reading file %s\n", name.c_str());
+        return;
+    }
+
+    auto compiled = compile(L, script.value().c_str());
+    if (!compiled)
+        return;
+
+    exec(compiled.value());
 }
 
-void load_luas_from_dir(lua_State* L, const std::filesystem::path& dir)
+void load_luas_from_dir(lua_State* L, const fs::path& dir)
 {
-    for (const auto& entry : std::filesystem::directory_iterator{ dir })
+    for (const auto& entry : fs::directory_iterator{ dir })
     {
         if (entry.is_regular_file() && entry.path().extension() == ".lua")
         {
-            auto name = entry.path().filename().string();
-            printf("loading %s\n", name.c_str());
-
-            auto script = read_whole_file(entry.path());
-            if (!script)
-            {
-                printf("Failed reading file %s\n", name.c_str());
-                continue;
-            }
-
-            auto compiled = compile(L, script.value().c_str());
-            if (!compiled)
-                continue;
-
-            exec(compiled.value());
+            load_lua_file(L, entry);
         }
     }
 }
 
-std::optional<std::filesystem::path> get_scripts_folder(HMODULE this_mod)
+std::optional<fs::path> get_scripts_folder()
 {
-    TCHAR path[MAX_PATH]{};
-    if (!GetModuleFileName(this_mod, path, MAX_PATH))
-    {
-        printf("GetModuleFileName failed (%i)\n", GetLastError());
+    auto mod_dir = util::this_dir();
+    if (!mod_dir)
         return std::nullopt;
-    }
 
-    auto scripts_path = std::filesystem::path(path).remove_filename() / "Scripts";
-    if (std::filesystem::exists(scripts_path) && std::filesystem::is_directory(scripts_path))
+    auto scripts_path = mod_dir.value() / "Scripts";
+    if (fs::is_directory(scripts_path))
         return scripts_path;
 
-    printf("Scripts folder not found\n");
+    util::log("Scripts folder not found\n");
     return std::nullopt;
 }
 
-DWORD start(LPVOID this_mod)
+void command_loop(lua_State* L, fs::path& scripts)
 {
-    AllocConsole();
-    freopen("CONIN$", "r", stdin);
-    freopen("CONOUT$", "w", stdout);
-    //freopen("CONOUT$", "w", stderr);
+    util::log("Type 'loadall' to load all scripts\n");
+    util::log("Type 'load <filename> ...' to load specific scripts\n");
 
-    printf("GILua by azzu\n");
-
-    auto dir_opt = get_scripts_folder((HMODULE)this_mod);
-    if (!dir_opt)
-        return 0;
-    auto dir = dir_opt.value();
-
-    get_gi_L();
-
-    printf("Type 'load' to load all scripts\n");
-
-    auto state = luaL_newstate();
     while (true)
     {
         std::string input;
         std::getline(std::cin, input);
-        if (input == "load")
-            load_luas_from_dir(state, dir);
+        auto cmd = util::split(input, ' ');
+        if (cmd.empty())
+            continue;
+        auto nargs = cmd.size() - 1;
+
+        if (cmd[0] == "loadall")
+        {
+            load_luas_from_dir(L, scripts);
+        }
+        else if (cmd[0] == "load")
+        {
+            for (int i = 0; i < nargs; i++)
+            {
+                auto file = scripts / cmd[i+1];
+                file.replace_extension(".lua");
+                if (fs::is_regular_file(file))
+                    load_lua_file(L, file);
+                else
+                    util::log("File %s not found\n", file.string().c_str());
+            }
+        }
         else
-            printf("Invalid command!\n");
+            util::log("Invalid command!\n");
     }
+}
+
+DWORD start(LPVOID)
+{
+    AllocConsole();
+    freopen("CONIN$", "r", stdin);
+    freopen("CONOUT$", "w", stdout);
+    freopen("CONOUT$", "w", stderr);
+
+    util::log("GILua by azzu\n");
+
+    auto dir = get_scripts_folder();
+    if (!dir)
+        return 0;
+
+    get_gi_L();
+
+    auto state = luaL_newstate();
+    command_loop(state, dir.value());
 
     return 0;
 }
@@ -189,6 +222,6 @@ DWORD start(LPVOID this_mod)
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
     if (fdwReason == DLL_PROCESS_ATTACH)
-        CloseHandle(CreateThread(NULL, 0, &start, hinstDLL, NULL, NULL));
+        CloseHandle(CreateThread(NULL, 0, &start, NULL, NULL, NULL));
     return TRUE;
 }

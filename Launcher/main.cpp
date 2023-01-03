@@ -4,6 +4,10 @@
 #include <optional>
 #include <fstream>
 
+#include "../GILua/util.hpp"
+
+namespace fs = std::filesystem;
+
 bool InjectStandard(HANDLE hTarget, const char* dllpath)
 {
     LPVOID loadlib = GetProcAddress(GetModuleHandle(L"kernel32"), "LoadLibraryA");
@@ -44,66 +48,42 @@ bool InjectStandard(HANDLE hTarget, const char* dllpath)
     return true;
 }
 
-std::optional<std::string> read_whole_file(const std::filesystem::path& file)
-try
-{
-    std::stringstream buf;
-    std::ifstream ifs(file);
-    if (!ifs.is_open())
-        return std::nullopt;
-    ifs.exceptions(std::ios::failbit);
-    buf << ifs.rdbuf();
-    return buf.str();
-}
-catch (const std::ios::failure&)
-{
-    return std::nullopt;
-}
-
-std::optional<std::filesystem::path> this_dir()
-{
-    TCHAR path[MAX_PATH]{};
-    if (!GetModuleFileName(GetModuleHandle(NULL), path, MAX_PATH))
-    {
-        printf("GetModuleFileName failed (%i)\n", GetLastError());
-        return std::nullopt;
-    }
-
-    return std::filesystem::path(path).remove_filename();
-}
-
 int main()
 {
-    auto current_dir = this_dir();
+    auto current_dir = util::this_dir();
     if (!current_dir)
         return 0;
 
     auto dll_path = current_dir.value() / "GILua.dll";
-    if (!std::filesystem::exists(dll_path) || !std::filesystem::is_regular_file(dll_path))
+    if (!fs::is_regular_file(dll_path))
     {
         printf("GILua.dll not found\n");
+        system("pause");
         return 0;
     }
 
     auto settings_path = current_dir.value() / "settings.txt";
-    if (!std::filesystem::exists(settings_path) || !std::filesystem::is_regular_file(settings_path))
+    if (!fs::is_regular_file(settings_path))
     {
         printf("settings.txt not found\n");
+        system("pause");
         return 0;
     }
 
-    auto settings = read_whole_file(settings_path);
+    auto settings = util::read_whole_file(settings_path);
     if (!settings)
     {
         printf("Failed reading settings.txt\n");
+        system("pause");
         return 0;
     }
 
     std::string exe_path;
     std::getline(std::stringstream(settings.value()), exe_path);
-    if (!std::filesystem::exists(exe_path) || !std::filesystem::is_regular_file(exe_path))
+    if (!fs::is_regular_file(exe_path))
     {
         printf("Target executable not found\n");
+        system("pause");
         return 0;
     }
 
