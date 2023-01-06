@@ -205,6 +205,9 @@ DWORD start(LPVOID)
     freopen("CONOUT$", "w", stdout);
     freopen("CONOUT$", "w", stderr);
 
+    DWORD mode = 0;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+
     util::log("GILua by azzu\n");
 
     auto dir = get_scripts_folder();
@@ -214,6 +217,10 @@ DWORD start(LPVOID)
     get_gi_L();
 
     auto state = luaL_newstate();
+
+    // rsapatch breaks input, restore input mode
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+
     command_loop(state, dir.value());
 
     return 0;
