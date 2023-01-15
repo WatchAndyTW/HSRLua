@@ -18,12 +18,14 @@ namespace fs = std::filesystem;
 
 lua_State* gi_L;
 HMODULE xlua;
+HANDLE main_thread;
 
 using pfn_loadbuffer = int (*)(lua_State*, const char*, size_t, const char*);
 pfn_loadbuffer* pp_loadbuffer;
 int xluaL_loadbuffer_hook(lua_State* L, const char* chunk, size_t sz, const char* chunkname)
 {
     gi_L = L;
+    main_thread = OpenThread(THREAD_ALL_ACCESS, false, GetCurrentThreadId());
     xlua = GetModuleHandle(L"xlua");
     *pp_loadbuffer = (pfn_loadbuffer)GetProcAddress(xlua, "xluaL_loadbuffer");
     return (*pp_loadbuffer)(L, chunk, sz, chunkname);
@@ -135,7 +137,15 @@ void load_lua_file(lua_State* L, const fs::path& file)
     if (!compiled)
         return;
 
-    exec(compiled.value());
+    // execute on the right thread or some functions will crash
+    auto copy = new std::string(compiled.value());
+    auto execute = [](ULONG_PTR compiled)
+    {
+        auto str = (const std::string*)compiled;
+        exec(*str);
+        delete str;
+    };
+    QueueUserAPC(execute, main_thread, (ULONG_PTR)copy);
 }
 
 void load_luas_from_dir(lua_State* L, const fs::path& dir)
