@@ -215,9 +215,6 @@ DWORD start(LPVOID)
     freopen("CONOUT$", "w", stdout);
     freopen("CONOUT$", "w", stderr);
 
-    DWORD mode = 0;
-    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
-
     util::log("GILua by azzu\n");
 
     auto dir = get_scripts_folder();
@@ -229,7 +226,11 @@ DWORD start(LPVOID)
     auto state = luaL_newstate();
 
     // rsapatch breaks input, restore input mode
-    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE),
+        ENABLE_INSERT_MODE | ENABLE_EXTENDED_FLAGS |
+        ENABLE_PROCESSED_INPUT | ENABLE_QUICK_EDIT_MODE |
+        ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
+        );
 
     command_loop(state, dir.value());
 
