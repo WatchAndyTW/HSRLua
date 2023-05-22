@@ -13,53 +13,99 @@
 #include "scanner.hpp"
 #include "pe.hpp"
 #include "util.hpp"
+#include "hook.hpp"
 
 namespace fs = std::filesystem;
 
+bool is_new_gi = false;
+
 lua_State* gi_L;
+HMODULE ua;
 HMODULE xlua;
 HANDLE main_thread;
 
 using pfn_loadbuffer = int (*)(lua_State*, const char*, size_t, const char*);
+pfn_loadbuffer xluaL_loadbuffer;
 pfn_loadbuffer* pp_loadbuffer;
+std::unique_ptr<BadHook<pfn_loadbuffer>> loadbuffer_hook_obj = nullptr;
+
+int xluaL_loadbuffer_hook_new(lua_State* L, const char* chunk, size_t sz, const char* chunkname)
+{
+    gi_L = L;
+    main_thread = OpenThread(THREAD_ALL_ACCESS, false, GetCurrentThreadId());
+    loadbuffer_hook_obj->unhook();
+    auto orig = loadbuffer_hook_obj->get_orig();
+    return orig(L, chunk, sz, chunkname);
+}
+
 int xluaL_loadbuffer_hook(lua_State* L, const char* chunk, size_t sz, const char* chunkname)
 {
     gi_L = L;
     main_thread = OpenThread(THREAD_ALL_ACCESS, false, GetCurrentThreadId());
-    xlua = GetModuleHandle(L"xlua");
-    *pp_loadbuffer = (pfn_loadbuffer)GetProcAddress(xlua, "xluaL_loadbuffer");
+    xlua = GetModuleHandle(L"xlua.dll");
+    xluaL_loadbuffer = (pfn_loadbuffer)GetProcAddress(xlua, "xluaL_loadbuffer");
+    *pp_loadbuffer = xluaL_loadbuffer;
     return (*pp_loadbuffer)(L, chunk, sz, chunkname);
 }
 
 pfn_loadbuffer* scan_loadbuffer(HMODULE ua)
 {
-    util::log("Scanning... ");
+    util::log("Scanning...\n");
+    auto rdata = util::pe::get_section_by_name(ua, ".rdata");
     auto il2cpp = util::pe::get_section_by_name(ua, "il2cpp");
     if (il2cpp == NULL)
         il2cpp = util::pe::get_section_by_name(ua, ".text");
 
-    auto rdata = util::pe::get_section_by_name(ua, ".rdata");
-
     auto str = util::scanner::find_pat((const uint8_t*)"xluaL_loadbuffer", "xxxxxxxxxxxxxxxx", (const uint8_t*)((uint64_t)ua + rdata->VirtualAddress), rdata->Misc.VirtualSize);
+    if (str == NULL)
+        return NULL;
+
     auto ref = util::scanner::find_ref_relative(str, (const uint8_t*)((uint64_t)ua + il2cpp->VirtualAddress), il2cpp->Misc.VirtualSize, true);
 
-    auto a = util::scanner::find_pat((const uint8_t*)"\xE8\x00\x00\x00\x00\x48", "x????x", ref, 0x100);
-    a += 8;
-    auto off = *(uint32_t*)a;
-    pfn_loadbuffer* ptr = (pfn_loadbuffer*)(a + off + 4);
+    auto mov = util::scanner::find_pat((const uint8_t*)"\xE8\x00\x00\x00\x00\x48", "x????x", ref, 0x100);
+    mov += 8;
+    auto off = *(uint32_t*)mov;
+    pfn_loadbuffer* ptr = (pfn_loadbuffer*)(mov + off + 4);
 
-    printf("%p\n", ptr);
+    util::log("xluaL_loadbuffer: %p\n", ptr);
     return ptr;
+}
+
+pfn_loadbuffer scan_loadbuffer_new(HMODULE ua)
+{
+    auto text = util::pe::get_section_by_name(ua, ".text");
+    auto beg = (const uint8_t*)((uint64_t)ua + text->VirtualAddress);
+    return (pfn_loadbuffer)util::scanner::find_pat((const uint8_t*)"\x48\x83\xEC\x38\x4D\x63\xC0", "xxxxxxx", beg, text->Misc.VirtualSize);
 }
 
 void get_gi_L()
 {
-    HMODULE ua = NULL;
-    while ((ua = GetModuleHandle(L"UserAssembly.dll")) == 0)
-        Sleep(50);
+    while (true)
+    {
+        if (ua = GetModuleHandle(L"GameAssembly.dll"))
+            break;
+        if (ua = GetModuleHandle(L"UserAssembly.dll"))
+            break;
 
+        Sleep(50);
+    }
+    
     pp_loadbuffer = scan_loadbuffer(ua);
-    *pp_loadbuffer = xluaL_loadbuffer_hook;
+    if (pp_loadbuffer == NULL)
+    {
+        xluaL_loadbuffer = scan_loadbuffer_new(ua);
+        util::log("xluaL_loadbuffer: %p\n", xluaL_loadbuffer);
+        Sleep(2000); // need to hook after vmprotect crc check
+
+        hook_init();
+        loadbuffer_hook_obj = make_hook(xluaL_loadbuffer, xluaL_loadbuffer_hook_new, 16);
+
+        is_new_gi = true;
+    }
+    else
+    {
+        *pp_loadbuffer = xluaL_loadbuffer_hook;
+    }
 
     util::log("Waiting for Lua...\n");
 
@@ -102,10 +148,6 @@ std::optional<std::string> compile(lua_State* L, const char* script)
 
 void exec(const std::string& compiled)
 {
-    using pfn_pcall = int (*)(lua_State* L, int nargs, int nresults, int errfunc);
-    static auto xlua_pcall = (pfn_pcall)GetProcAddress(xlua, "lua_pcall");
-    static auto xluaL_loadbuffer = (pfn_loadbuffer)GetProcAddress(xlua, "xluaL_loadbuffer");
-
     int ret = xluaL_loadbuffer(gi_L, compiled.c_str(), compiled.length(), "GILua");
     if (ret != 0)
     {
@@ -115,7 +157,7 @@ void exec(const std::string& compiled)
         return;
     }
 
-    ret = xlua_pcall(gi_L, 0, 0, 0);
+    ret = lua_pcall(gi_L, 0, 0, 0);
     if (ret != 0)
     {
         util::log("execution failed(%i)\n", ret);
@@ -234,6 +276,9 @@ DWORD start(LPVOID)
         ENABLE_PROCESSED_INPUT | ENABLE_QUICK_EDIT_MODE |
         ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
         );
+
+    if (is_new_gi)
+        load_lua_file(gi_L, dir.value() / "xluafix.lua");
 
     command_loop(state, dir.value());
 
