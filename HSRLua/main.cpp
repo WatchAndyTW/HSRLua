@@ -27,7 +27,6 @@ HMODULE custom_xluau;
 typedef int (WINAPI* pfn_load)(lua_State*, const char*, const char*, size_t, int);
 typedef int (WINAPI* pfn_pcall)(lua_State*, int, int, int);
 typedef int (WINAPI* pfn_settop)(lua_State*, int);
-typedef const char* (WINAPI* pfn_compile)(const char*, size_t, const void*, size_t*);
 typedef lua_State* (WINAPI* pfn_newstate)();
 typedef int (WINAPI* pfn_tolstring)(lua_State*, int, size_t*);
 typedef int (WINAPI* pfn_loadbuffer)(lua_State*, const char*, size_t, const char*);
@@ -35,7 +34,6 @@ typedef int (WINAPI* pfn_loadbuffer)(lua_State*, const char*, size_t, const char
 pfn_load luau_load = NULL;
 pfn_pcall lua_pcall = NULL;
 pfn_settop lua_settop = NULL;
-pfn_compile luau_compile = NULL;
 pfn_newstate luaL_newstate = NULL;
 pfn_tolstring lua_tolstring = NULL;
 pfn_loadbuffer xluaL_loadbuffer = NULL;
@@ -49,7 +47,6 @@ void get_hsr_L(lua_State* L)
     lua_tolstring = (pfn_tolstring)GetProcAddress(xluau, "lua_tolstring");
     xluaL_loadbuffer = (pfn_loadbuffer)GetProcAddress(xluau, "xluaL_loadbuffer");
     lua_pcall = (pfn_pcall)GetProcAddress(xluau, "lua_pcall");
-    luau_compile = (pfn_compile)((FARPROC)((uintptr_t)custom_xluau + 0xAAFA0));
 
     util::log("Waiting for Lua...\n");
 
@@ -57,14 +54,6 @@ void get_hsr_L(lua_State* L)
         util::log("L: %p\n", hsr_L);
         break;
     }
-}
-
-const char* compile(string script)
-{
-    size_t bytecode_size = 0;
-    auto compiled = luau_compile(script.c_str(), script.length(), nullptr, &bytecode_size);
-
-    return compiled;
 }
 
 std::optional<fs::path> get_scripts_folder(const char* folder_name)
@@ -113,11 +102,7 @@ void load_lua_file(lua_State* L, const fs::path& file)
         return;
     }
 
-    auto compiled = compile(script.value());
-    if (!compiled)
-        return;
-
-    exec(compiled);
+    exec(script.value().c_str());
 }
 
 void load_luas_from_dir(lua_State* L, const fs::path& dir)
@@ -154,9 +139,9 @@ int WINAPI luau_load_replacement(lua_State* L, const char* chunkname, const char
                     util::log("Failed reading file %s\n", entry.path().filename().string().c_str());
                     continue;
                 }
-                auto compiled = compile(script.value());
+                auto bytecode = script.value().c_str();
 
-                luau_load(L, chunkname, compiled, strlen(compiled), 0);
+                xluaL_loadbuffer(L, bytecode, strlen(bytecode), "HSRLua");
                 lua_pcall(L, 0, 0, 0);
             }
         }
@@ -225,9 +210,6 @@ DWORD start(LPVOID)
 
         Sleep(50);
     }
-
-    // Load custom xluau library for bytecode compiling
-    custom_xluau = LoadLibraryA("xluau.x64d.dll");
 
     // MinHook initialize
     if (MH_Initialize() == MB_OK)
