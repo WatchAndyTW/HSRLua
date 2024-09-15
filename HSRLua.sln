@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.4.33205.214
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "GILua", "GILua\GILua.vcxproj", "{B66B8E0C-96A7-4946-9C96-8359C522B456}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HSRLua", "HSRLua\HSRLua.vcxproj", "{B66B8E0C-96A7-4946-9C96-8359C522B456}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Launcher", "Launcher\Launcher.vcxproj", "{1C979062-B608-4A70-80FC-E2C8E3170406}"
 EndProject

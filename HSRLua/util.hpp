@@ -14,7 +14,7 @@ namespace util
     template<typename... Args>
     void log(const char* fmt, Args... args)
     {
-        printf("[GILua] ");
+        printf("[HSRLua] ");
         printf(fmt, args...);
     }
 

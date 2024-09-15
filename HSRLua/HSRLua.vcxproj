@@ -24,6 +24,7 @@
     <ProjectGuid>{b66b8e0c-96a7-4946-9c96-8359c522b456}</ProjectGuid>
     <RootNamespace>GILua</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>HSRLua</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -111,6 +112,9 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)\xluau.x64d.dll" copy /y "$(SolutionDir)HSRLua\xluau.x64d.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -131,69 +135,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="lua\lapi.c" />
-    <ClCompile Include="lua\lauxlib.c" />
-    <ClCompile Include="lua\lbaselib.c" />
-    <ClCompile Include="lua\lbitlib.c" />
-    <ClCompile Include="lua\lcode.c" />
-    <ClCompile Include="lua\lcorolib.c" />
-    <ClCompile Include="lua\lctype.c" />
-    <ClCompile Include="lua\ldblib.c" />
-    <ClCompile Include="lua\ldebug.c" />
-    <ClCompile Include="lua\ldo.c" />
-    <ClCompile Include="lua\ldump.c" />
-    <ClCompile Include="lua\lfunc.c" />
-    <ClCompile Include="lua\lgc.c" />
-    <ClCompile Include="lua\linit.c" />
-    <ClCompile Include="lua\liolib.c" />
-    <ClCompile Include="lua\llex.c" />
-    <ClCompile Include="lua\lmathlib.c" />
-    <ClCompile Include="lua\lmem.c" />
-    <ClCompile Include="lua\loadlib.c" />
-    <ClCompile Include="lua\lobject.c" />
-    <ClCompile Include="lua\lopcodes.c" />
-    <ClCompile Include="lua\loslib.c" />
-    <ClCompile Include="lua\lparser.c" />
-    <ClCompile Include="lua\lstate.c" />
-    <ClCompile Include="lua\lstring.c" />
-    <ClCompile Include="lua\lstrlib.c" />
-    <ClCompile Include="lua\ltable.c" />
-    <ClCompile Include="lua\ltablib.c" />
-    <ClCompile Include="lua\ltm.c" />
-    <ClCompile Include="lua\lundump.c" />
-    <ClCompile Include="lua\lutf8lib.c" />
-    <ClCompile Include="lua\lvm.c" />
-    <ClCompile Include="lua\lzio.c" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="hook.hpp" />
-    <ClInclude Include="lua\lapi.h" />
-    <ClInclude Include="lua\lauxlib.h" />
-    <ClInclude Include="lua\lcode.h" />
-    <ClInclude Include="lua\lctype.h" />
-    <ClInclude Include="lua\ldebug.h" />
-    <ClInclude Include="lua\ldo.h" />
-    <ClInclude Include="lua\lfunc.h" />
-    <ClInclude Include="lua\lgc.h" />
-    <ClInclude Include="lua\llex.h" />
-    <ClInclude Include="lua\llimits.h" />
-    <ClInclude Include="lua\lmem.h" />
-    <ClInclude Include="lua\lobject.h" />
-    <ClInclude Include="lua\lopcodes.h" />
-    <ClInclude Include="lua\lparser.h" />
-    <ClInclude Include="lua\lprefix.h" />
-    <ClInclude Include="lua\lstate.h" />
-    <ClInclude Include="lua\lstring.h" />
-    <ClInclude Include="lua\ltable.h" />
-    <ClInclude Include="lua\ltm.h" />
-    <ClInclude Include="lua\lua.h" />
-    <ClInclude Include="lua\lua.hpp" />
-    <ClInclude Include="lua\luaconf.h" />
-    <ClInclude Include="lua\lualib.h" />
-    <ClInclude Include="lua\lundump.h" />
-    <ClInclude Include="lua\lvm.h" />
-    <ClInclude Include="lua\lzio.h" />
     <ClInclude Include="pe.hpp" />
     <ClInclude Include="scanner.hpp" />
     <ClInclude Include="util.hpp" />
